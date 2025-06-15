@@ -2,7 +2,7 @@ const BlockchainService = require('./blockchain.service');
 const { ethers } = require('ethers');
 
 // Re-using risk definitions from workers to keep consistency
-const { RISK_KEYWORDS, RISKY_SIGNATURES } = require('../workers/contract.worker');
+const { RISK_KEYWORDS, RISKY_SIGNATURES, analyzeHoneypotIndicators } = require('../workers/contract.worker');
 const { MAX_UINT256, APPROVAL_ABIS } = require('../workers/approval.worker');
 const { LP_STAKE_ABIS } = require('../workers/lpStake.worker');
 
@@ -83,8 +83,21 @@ class ScanService {
     for (const address of interactedContracts) {
       const sourceCodeData = await BlockchainService.getSourceCode(address, chain);
       if (sourceCodeData.SourceCode) {
-        const source = sourceCodeData.SourceCode.toLowerCase();
-        const foundKeywords = RISK_KEYWORDS.HIGH.filter(k => source.includes(k));
+        const originalSourceCode = sourceCodeData.SourceCode;
+        const lowerCaseSourceCode = originalSourceCode.toLowerCase();
+        
+        // Honeypot analysis
+        const honeypotIndicators = analyzeHoneypotIndicators(originalSourceCode);
+        if (honeypotIndicators.hiddenApprove) {
+          results.push({ type: 'Critical Honeypot Alert', description: 'This contract contains a hidden approve function and is likely malicious.', txHash: transactions.find(t=>t.to === address)?.hash, risk: 100 });
+          continue; // If it's a critical honeypot, no need for other checks
+        }
+        if (honeypotIndicators.details.length > 0) {
+            results.push({ type: 'Suspicious Contract', description: `Honeypot indicators found: ${honeypotIndicators.details.join(' ')}`, txHash: transactions.find(t=>t.to === address)?.hash, risk: 75 });
+        }
+
+        // Standard keyword analysis
+        const foundKeywords = RISK_KEYWORDS.HIGH.filter(k => lowerCaseSourceCode.includes(k));
         if (foundKeywords.length > 0) {
           results.push({ type: 'High Risk Contract Interaction', description: `Verified contract with keywords: ${foundKeywords.join(', ')}`, txHash: transactions.find(t=>t.to === address)?.hash, risk: 85 });
         }

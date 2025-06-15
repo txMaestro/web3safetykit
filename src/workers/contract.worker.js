@@ -120,25 +120,35 @@ const processContractAnalysis = async (job) => {
         continue;
       }
 
-      const sourceCode = sourceCodeData.SourceCode.toLowerCase();
-      const foundRisks = {
-        HIGH: RISK_KEYWORDS.HIGH.filter(k => sourceCode.includes(k)),
-        MEDIUM: RISK_KEYWORDS.MEDIUM.filter(k => sourceCode.includes(k)),
-        LOW: RISK_KEYWORDS.LOW.filter(k => sourceCode.includes(k)),
+      const originalSourceCode = sourceCodeData.SourceCode;
+      const lowerCaseSourceCode = originalSourceCode.toLowerCase();
+      
+      // Perform keyword-based risk analysis
+      const keywordRisks = {
+        HIGH: RISK_KEYWORDS.HIGH.filter(k => lowerCaseSourceCode.includes(k)),
+        MEDIUM: RISK_KEYWORDS.MEDIUM.filter(k => lowerCaseSourceCode.includes(k)),
+        LOW: RISK_KEYWORDS.LOW.filter(k => lowerCaseSourceCode.includes(k)),
       };
       
-      const totalRisks = foundRisks.HIGH.length + foundRisks.MEDIUM.length + foundRisks.LOW.length;
+      // Perform honeypot-specific analysis
+      const honeypotIndicators = analyzeHoneypotIndicators(originalSourceCode);
 
-      if (totalRisks > 0) {
-        const aiSummary = (foundRisks.HIGH.length > 0 || foundRisks.MEDIUM.length > 0)
-          ? await AiService.analyzeContract(sourceCodeData.SourceCode)
+      const totalKeywordRisks = keywordRisks.HIGH.length + keywordRisks.MEDIUM.length + keywordRisks.LOW.length;
+      const hasHoneypotIndicators = honeypotIndicators.hiddenApprove || honeypotIndicators.hardcodedAddress || honeypotIndicators.obfuscatedLogic;
+
+      if (totalKeywordRisks > 0 || hasHoneypotIndicators) {
+        // Determine if AI analysis is needed
+        const needsAiAnalysis = keywordRisks.HIGH.length > 0 || keywordRisks.MEDIUM.length > 0 || hasHoneypotIndicators;
+        const aiSummary = needsAiAnalysis
+          ? await AiService.analyzeContract(originalSourceCode)
           : 'No high/medium risks found, AI analysis skipped.';
         
         analysisResults.verifiedContractsWithRisks.push({
           address: contractAddress,
           implementationAddress: implementationAddress,
           isProxy: !!implementationAddress,
-          risks: foundRisks,
+          risks: keywordRisks,
+          honeypotIndicators: honeypotIndicators,
           aiSummary: aiSummary,
         });
       }
@@ -153,15 +163,25 @@ const processContractAnalysis = async (job) => {
     // Notify for new, verified contracts with HIGH risk keywords
     for (const contract of analysisResults.verifiedContractsWithRisks) {
       if (!previousContracts.has(contract.address.toLowerCase()) && contract.risks.HIGH.length > 0) {
-        const riskReason = `High-risk keywords found: *${contract.risks.HIGH.join(', ')}*`;
+        let riskReason = `High-risk keywords found: *${contract.risks.HIGH.join(', ')}*`;
+        let messageTitle = 'HIGH-RISK CONTRACT INTERACTION';
+        let additionalWarning = '';
+
+        if (contract.honeypotIndicators?.hiddenApprove) {
+            messageTitle = 'CRITICAL HONEYPOT ALERT';
+            additionalWarning = '\n\n*CRITICAL WARNING: This contract contains a hidden approval function and is likely a honeypot designed to steal your funds.*';
+        } else if (contract.honeypotIndicators?.details.length > 0) {
+            additionalWarning = `\n\n*Honeypot Indicators:* ${contract.honeypotIndicators.details.join(' ')}`;
+        }
+
         const message = `
-‼️ *HIGH-RISK CONTRACT INTERACTION* ‼️
+‼️ *${messageTitle}* ‼️
 
 Your wallet (*${wallet.label || wallet.address.substring(0, 6)}...*) has interacted with a new *high-risk* contract:
 
 - *Contract Address:* \`${contract.address}\`
 - *Detected Risk:* ${riskReason}
-- *AI Summary:* ${contract.aiSummary.substring(0, 200)}...
+- *AI Summary:* ${contract.aiSummary.substring(0, 200)}...${additionalWarning}
 
 This contract could be extremely dangerous. Please proceed with caution.
         `;
@@ -219,4 +239,5 @@ createWorker(TASK_TYPE, processContractAnalysis);
 module.exports = {
   RISK_KEYWORDS,
   RISKY_SIGNATURES,
+  analyzeHoneypotIndicators, // Exporting the new function
 };
