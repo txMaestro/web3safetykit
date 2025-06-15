@@ -10,6 +10,7 @@ This repository contains the backend services for the Web3 Wallet Safety Kit. It
 - **Sign-In with Ethereum (SIWE)**: Secure, passwordless authentication using only a crypto wallet.
 - **Guest Scan**: Instant, no-signup-required wallet analysis to provide immediate value.
 - **Deep Contract Analysis**: Scans both verified source code (for risky keywords) and unverified bytecode (for malicious function signatures).
+- **Wallet Profiling**: Labels wallets and contracts with real-world identities such as known dApps, protocols, influencers, whales, and social accounts using hybrid data sources.
 - **Approval Monitoring**: Detects excessive or unlimited token (`ERC20`) and NFT (`ERC721`/`ERC1155`) approvals.
 - **LP & Stake Tracking**: Identifies potentially forgotten liquidity pool or staking positions.
 - **Dynamic Risk Scoring**: Generates a clear, actionable risk score based on a variety of factors.
