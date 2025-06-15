@@ -56,6 +56,59 @@ const RISKY_SIGNATURES = {
   }
 };
 
+/**
+ * Analyzes contract source code for specific honeypot indicators.
+ * @param {string} sourceCode - The contract's source code.
+ * @returns {object} An object containing found indicators and details.
+ */
+const analyzeHoneypotIndicators = (sourceCode) => {
+  const indicators = {
+    hiddenApprove: false,
+    hardcodedAddress: false,
+    obfuscatedLogic: false,
+    unnecessarySafeMath: false,
+    details: [],
+  };
+  const lowerCaseSourceCode = sourceCode.toLowerCase();
+
+  // 1. Hidden approve in transfer hooks (e.g., _transfer, transferFrom)
+  const transferHookRegex = /function\s+(_transfer|transferFrom|transfer)\s*\([^)]*\)\s*internal\s*virtual\s*override/i;
+  const approveCallRegex = /approve\s*\(/i;
+  const transferHookMatch = sourceCode.match(transferHookRegex);
+  if (transferHookMatch) {
+    // A very basic check: if 'approve' is found near a transfer hook override.
+    // This is not perfect but a strong indicator.
+    if (approveCallRegex.test(transferHookMatch.input.substring(transferHookMatch.index, transferHookMatch.index + 500))) {
+        indicators.hiddenApprove = true;
+        indicators.details.push('Critical: Found a suspicious `approve` call inside a transfer hook, which could enable token theft.');
+    }
+  }
+
+  // 2. Hardcoded address blocks in transfer functions
+  const hardcodedAddressRegex = /require\(\s*sender\s*!=\s*0x[a-f0-9]{40}/i;
+  if (hardcodedAddressRegex.test(sourceCode)) {
+    indicators.hardcodedAddress = true;
+    indicators.details.push('High Risk: Found a hardcoded address block in a transfer function, which may prevent selling.');
+  }
+
+  // 3. Obfuscated logic (very basic check for unusual encoding)
+  const obfuscationRegex = /string\.concat\s*\(\s*".*"\s*,\s*abi\.encodePacked/i;
+  if (obfuscationRegex.test(sourceCode)) {
+    indicators.obfuscatedLogic = true;
+    indicators.details.push('Medium Risk: Detected unusual string/abi encoding, which could be used to hide malicious logic.');
+  }
+
+  // 4. Unnecessary SafeMath usage in modern Solidity
+  const pragmaVersionRegex = /pragma\s+solidity\s*\^?([0-9]+\.[0-9]+)/;
+  const safeMathRegex = /using\s+SafeMath\s+for\s+uint256/i;
+  const versionMatch = sourceCode.match(pragmaVersionRegex);
+  if (versionMatch && parseFloat(versionMatch[1]) >= 0.8 && safeMathRegex.test(sourceCode)) {
+    indicators.unnecessarySafeMath = true;
+    indicators.details.push('Low Risk: Uses SafeMath library with a Solidity version (>=0.8.0) that has built-in overflow checks, which is redundant and suspicious.');
+  }
+
+  return indicators;
+};
 
 /**
  * Processes a single 'analyze_contracts' job.
