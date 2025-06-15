@@ -1,7 +1,7 @@
 {
   "name": "web3safetykit",
   "version": "1.0.0",
-  "description": "Web3 Cüzdan Güvenlik Kiti - Backend Servisleri",
+  "description": "Web3 Wallet Safety Kit",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
