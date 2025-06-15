@@ -9,10 +9,24 @@ const { ethers } = require('ethers');
 const TASK_TYPE = 'analyze_approvals';
 const MAX_UINT256 = '115792089237316195423570985008687907853269984665640564039457584007913129639935';
 
-// Standard ABIs for parsing approval transactions
+// ABIs for parsing various types of approval-related transactions
 const APPROVAL_ABIS = [
+  // Standard ERC20/ERC721 approvals
   'function approve(address spender, uint256 amount)',
   'function setApprovalForAll(address operator, bool approved)',
+
+  // EIP-2612 Permit (gasless approvals)
+  'function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)',
+
+  // Uniswap's Permit2 single permit
+  'function permit(address, ((address, uint256), uint256, uint256), bytes)',
+  
+  // Uniswap's Permit2 batch permit
+  'function permit(((address,uint256)[],uint256,uint256),bytes)',
+
+  // Common Permit2 interaction functions
+  'function permitTransferFrom(((address,uint256),uint256,address),address,bytes)',
+  'function permitWitnessTransferFrom(((address,uint256),uint256,address),address,bytes32,string,bytes)'
 ];
 const approvalInterface = new ethers.Interface(APPROVAL_ABIS);
 
@@ -55,12 +69,27 @@ const processApprovalAnalysis = async (job) => {
       } else if (name === 'setApprovalForAll') {
         const [operator, approved] = args;
         if (approved) {
-          // Store that this operator was approved for this NFT collection
           potentialApprovals.set(`${contractAddress}-${operator}`, { type: 'NFT', contractAddress, operator });
         } else {
-          // If user revokes approval, remove it from our list
           potentialApprovals.delete(`${contractAddress}-${operator}`);
         }
+      } else if (name === 'permit') {
+        // This can be EIP-2612 or Permit2, we'll check args
+        const spender = args[1]; // Spender is consistently the second argument in EIP-2612
+        const deadline = args[3]; // Deadline is the fourth argument
+        
+        // Check if deadline is far in the future (e.g., > 1 year from now)
+        const oneYearFromNow = Math.floor(Date.now() / 1000) + 31536000;
+        const isLongLived = deadline && BigInt(deadline.toString()) > BigInt(oneYearFromNow);
+
+        if (isLongLived) {
+            potentialApprovals.set(`${contractAddress}-${spender}`, { type: 'Permit', contractAddress, spender, deadline: deadline.toString(), isLongLived });
+        }
+      } else if (name.toLowerCase().includes('permittransferfrom')) {
+        // This is a Permit2 interaction, which is a standing approval.
+        // The spender is the contract being interacted with (tx.to)
+        const spender = tx.to;
+        potentialApprovals.set(`${contractAddress}-${spender}`, { type: 'Permit2', contractAddress, spender });
       }
     }
 
@@ -89,6 +118,29 @@ const processApprovalAnalysis = async (job) => {
             riskLevel: 'high',
           });
         }
+      } else if (approval.type === 'Permit' && approval.isLongLived) {
+        // For now, we assume a long-lived permit is an active risk.
+        // A more advanced check could try to verify the nonce.
+        riskyApprovals.push({
+            type: 'Permit',
+            tokenAddress: approval.contractAddress,
+            spender: approval.spender,
+            deadline: new Date(approval.deadline * 1000).toISOString(),
+            riskLevel: 'medium',
+            isUnlimited: false, // Permit is for a specific amount, but can be long-lived
+        });
+      } else if (approval.type === 'Permit2') {
+        // Permit2 is a standing approval on the Permit2 contract itself.
+        // We can check the allowance on the Permit2 contract for the user's wallet.
+        // Note: This requires knowing the official Permit2 contract address.
+        // For now, we'll just flag the interaction as an informational risk.
+        riskyApprovals.push({
+            type: 'Permit2 Interaction',
+            contractAddress: approval.contractAddress, // The contract that USES Permit2
+            spender: approval.spender,
+            riskLevel: 'medium',
+            isUnlimited: false,
+        });
       }
     }
 
@@ -100,24 +152,34 @@ const processApprovalAnalysis = async (job) => {
     const currentApprovals = new Set();
     
     riskyApprovals.forEach(approval => {
-      const identifier = approval.type === 'ERC20'
-        ? `erc20-${approval.tokenAddress}-${approval.spender}`.toLowerCase()
-        : `nft-${approval.contractAddress}-${approval.operator}`.toLowerCase();
+      const identifier = `${approval.type}-${approval.tokenAddress || approval.contractAddress}-${approval.spender || approval.operator}`.toLowerCase();
       currentApprovals.add(identifier);
 
-      // Check if this is a new, high-risk approval
-      if (!previousApprovals.has(identifier) && (approval.isUnlimited || approval.type === 'NFT')) {
-        const message = `
-🚨 *New Risky Approval Detected* 🚨
+      // Check if this is a new, medium-to-high-risk approval
+      if (!previousApprovals.has(identifier) && (approval.riskLevel === 'high' || approval.riskLevel === 'medium')) {
+        let riskDescription = '';
+        if (approval.isUnlimited) {
+            riskDescription = 'UNLIMITED spending approval granted.';
+        } else if (approval.type === 'NFT') {
+            riskDescription = 'Approval for the ENTIRE collection granted.';
+        } else if (approval.type === 'Permit') {
+            riskDescription = `Long-lived 'Permit' signature granted until ${approval.deadline}.`;
+        } else if (approval.type === 'Permit2 Interaction') {
+            riskDescription = 'Interaction with a Permit2-enabled contract, which may represent a standing approval.';
+        }
 
-Your wallet (*${wallet.label || wallet.address.substring(0, 6)}...*) has granted a new spending approval:
+        const message = `
+        
+⚠️ *New Spending Approval Detected* ⚠️
+
+Your wallet (*${wallet.label || wallet.address.substring(0, 6)}...*) has a new spending approval:
 
 - *Type:* ${approval.type}
-- *Contract:* \`${approval.type === 'ERC20' ? approval.tokenAddress : approval.contractAddress}\`
-- *Spender:* \`${approval.type === 'ERC20' ? approval.spender : approval.operator}\`
-- *Risk:* ${approval.isUnlimited ? 'UNLIMITED spending approval granted.' : 'Approval for the ENTIRE collection granted.'}
+- *Contract:* \`${approval.tokenAddress || approval.contractAddress}\`
+- *Spender:* \`${approval.spender || approval.operator}\`
+- *Risk:* ${riskDescription}
 
-If you did not perform this action, consider revoking this approval.
+If this is unexpected, review and consider revoking the approval.
         `;
         if (user && user.telegramChatId) {
           NotificationService.sendTelegramMessage(user.telegramChatId, message);
