@@ -29,7 +29,7 @@ class ScanService {
 
     const scanPromises = supportedChains.map(async (chain) => {
       try {
-        const maxTx = parseInt(process.env.INITIAL_SCAN_MAX_TX, 10) || 250;
+        const maxTx = 250; // Guest scan is always limited to 250 transactions for speed.
         const transactions = await BlockchainService.getTransactions(walletAddress, chain, { sort: 'desc', offset: maxTx });
 
         if (!Array.isArray(transactions)) {
