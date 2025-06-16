@@ -120,3 +120,8 @@ The platform supports multiple EVM-compatible chains via providerConfig.js. Each
   - Live JS & contract scanning on dApps
   - Pre-signing transaction alerts
   - Community-powered report/monetization system
+## 6. Tokenomics
+
+### 6.1 Token Burn Mechanism
+
+As you can see in the Tokenomics, we will burn 42.5% of the supply. To do this in a completely permissionless way, we have developed a contract that you can find in the [`contracts/`](contracts/) folder. You can also review it at [link]. Once the token is bonded, we will set the token contract, renounce ownership, and remove all our authority from the contract. This will ensure that the tokens are 100% burned. Additionally, as you can also see in the contract, we provide a small reward to wallets that burn tokens.
