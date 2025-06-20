@@ -20,10 +20,10 @@ class ScanService {
     // Temporarily limiting to ETH and Base as requested
     const supportedChains = [
       'ethereum',
-      'base'
-      // 'polygon',
-      // 'arbitrum',
-      // 'zksync'
+      'base',
+      'polygon',
+      'arbitrum',
+      'zksync'
     ];
     const rawResults = {};
 
@@ -96,7 +96,7 @@ class ScanService {
         const deadline = args[3]; // Deadline is the fourth argument in EIP-2612
         const oneYearFromNow = Math.floor(Date.now() / 1000) + 31536000;
         if (deadline && BigInt(deadline.toString()) > BigInt(oneYearFromNow)) {
-            results.push({ type: 'Medium Risk Approval', description: `Long-lived 'Permit' signature granted to ${args[1]}`, txHash: tx.hash, risk: 65 });
+          results.push({ type: 'Medium Risk Approval', description: `Long-lived 'Permit' signature granted to ${args[1]}`, txHash: tx.hash, risk: 65 });
         }
       } else if (name.toLowerCase().includes('permittransferfrom')) {
         results.push({ type: 'Informational', description: `Interaction with Permit2-enabled contract ${tx.to}`, txHash: tx.hash, risk: 40 });
@@ -113,21 +113,21 @@ class ScanService {
       if (sourceCodeData.SourceCode) {
         const originalSourceCode = sourceCodeData.SourceCode;
         const lowerCaseSourceCode = originalSourceCode.toLowerCase();
-        
+
         // Honeypot analysis
         const honeypotIndicators = analyzeHoneypotIndicators(originalSourceCode);
         if (honeypotIndicators.hiddenApprove) {
-          results.push({ type: 'Critical Honeypot Alert', description: 'This contract contains a hidden approve function and is likely malicious.', txHash: transactions.find(t=>t.to === address)?.hash, risk: 100 });
+          results.push({ type: 'Critical Honeypot Alert', description: 'This contract contains a hidden approve function and is likely malicious.', txHash: transactions.find(t => t.to === address)?.hash, risk: 100 });
           continue; // If it's a critical honeypot, no need for other checks
         }
         if (honeypotIndicators.details.length > 0) {
-            results.push({ type: 'Suspicious Contract', description: `Honeypot indicators found: ${honeypotIndicators.details.join(' ')}`, txHash: transactions.find(t=>t.to === address)?.hash, risk: 75 });
+          results.push({ type: 'Suspicious Contract', description: `Honeypot indicators found: ${honeypotIndicators.details.join(' ')}`, txHash: transactions.find(t => t.to === address)?.hash, risk: 75 });
         }
 
         // Standard keyword analysis
         const foundKeywords = RISK_KEYWORDS.HIGH.filter(k => lowerCaseSourceCode.includes(k));
         if (foundKeywords.length > 0) {
-          results.push({ type: 'High Risk Contract Interaction', description: `Verified contract with keywords: ${foundKeywords.join(', ')}`, txHash: transactions.find(t=>t.to === address)?.hash, risk: 85 });
+          results.push({ type: 'High Risk Contract Interaction', description: `Verified contract with keywords: ${foundKeywords.join(', ')}`, txHash: transactions.find(t => t.to === address)?.hash, risk: 85 });
         }
       } else {
         const bytecode = await BlockchainService.getCode(address, chain);
@@ -138,7 +138,7 @@ class ScanService {
           }
         }
         if (foundSignatures.length > 0) {
-          results.push({ type: 'High Risk Contract Interaction', description: `Unverified contract with functions: ${foundSignatures.join(', ')}`, txHash: transactions.find(t=>t.to === address)?.hash, risk: 95 });
+          results.push({ type: 'High Risk Contract Interaction', description: `Unverified contract with functions: ${foundSignatures.join(', ')}`, txHash: transactions.find(t => t.to === address)?.hash, risk: 95 });
         }
       }
     }
@@ -152,7 +152,7 @@ class ScanService {
       if (!tx || !tx.from || typeof tx.from !== 'string' || tx.from.toLowerCase() !== walletAddress.toLowerCase() || !tx.to) continue;
       const parsedTx = BlockchainService.parseTransactionInput(tx.input, lpStakeInterface);
       if (!parsedTx || checkedContracts.has(tx.to)) continue;
-      
+
       checkedContracts.add(tx.to);
       results.push({ type: 'Forgotten Liquidity Pool', description: `Potential LP/Staking position in ${tx.to}`, txHash: tx.hash, risk: 35 });
     }
@@ -181,21 +181,21 @@ class ScanService {
         formatted.alertsByChain[chain] = { error: result.error || 'No data found.' };
         continue;
       }
-      
+
       const { approvals, contracts, lpPositions } = result.data;
       const allAlerts = [...approvals, ...contracts, ...lpPositions];
-      
+
       formatted.alertsByChain[chain] = { alerts: allAlerts };
-      
+
       formatted.overview.activeApprovals += approvals.length;
       formatted.overview.lpPositions += lpPositions.length;
-      
+
       allAlerts.forEach(alert => {
         totalRisk += alert.risk;
         totalAlerts++;
       });
     }
-    
+
     // Calculate final risk score (average risk of all alerts, capped at 100)
     formatted.overview.riskScore = totalAlerts > 0 ? Math.min(Math.round(totalRisk / totalAlerts), 100) : 0;
     formatted.overview.stakedAssets = formatted.overview.lpPositions; // As per decision
