@@ -106,6 +106,10 @@ const processApprovalAnalysis = async (job) => {
             allowance: ethers.formatUnits(currentAllowance, 18), // Assuming 18 decimals, could be improved
             isUnlimited,
             riskLevel: isUnlimited ? 'high' : 'medium',
+            revoke: {
+              target: approval.contractAddress,
+              calldata: approvalInterface.encodeFunctionData('approve', [approval.spender, 0]),
+            }
           });
         }
       } else if (approval.type === 'NFT') {
@@ -116,6 +120,10 @@ const processApprovalAnalysis = async (job) => {
             contractAddress: approval.contractAddress,
             operator: approval.operator,
             riskLevel: 'high',
+            revoke: {
+              target: approval.contractAddress,
+              calldata: approvalInterface.encodeFunctionData('setApprovalForAll', [approval.operator, false]),
+            }
           });
         }
       } else if (approval.type === 'Permit' && approval.isLongLived) {

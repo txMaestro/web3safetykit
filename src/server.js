@@ -18,6 +18,7 @@ app.use('/api/v1/scan', require('./api/routes/scan'));
 app.use('/api/v1/newsletter', require('./api/routes/newsletter'));
 app.use('/api/wallets', require('./api/routes/wallets')); // This might need updates to use the new user model
 app.use('/api/queue', require('./api/routes/queue'));
+app.use('/api/v1/actions', require('./api/routes/actions'));
 
 // --- WORKER INITIALIZATION ---
 // The require calls below initialize the workers and their listeners.

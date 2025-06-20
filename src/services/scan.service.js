@@ -20,7 +20,7 @@ class ScanService {
     // Temporarily limiting to ETH and Base as requested
     const supportedChains = [
       'ethereum',
-      'base',
+      'base'
       // 'polygon',
       // 'arbitrum',
       // 'zksync'
@@ -68,10 +68,38 @@ class ScanService {
       const parsedTx = BlockchainService.parseTransactionInput(tx.input, approvalInterface);
       if (!parsedTx) continue;
 
-      if (parsedTx.name === 'approve' && parsedTx.args[1].toString() === MAX_UINT256) {
-        results.push({ type: 'High Risk Approval', description: `Unlimited ERC20 approval granted to ${parsedTx.args[0]}`, txHash: tx.hash, risk: 90 });
-      } else if (parsedTx.name === 'setApprovalForAll' && parsedTx.args[1] === true) {
-        results.push({ type: 'High Risk Approval', description: `Collection-wide NFT approval granted to ${parsedTx.args[0]}`, txHash: tx.hash, risk: 80 });
+      const { name, args } = parsedTx;
+
+      if (name === 'approve' && args[1].toString() === MAX_UINT256) {
+        results.push({
+          type: 'High Risk Approval',
+          description: `Unlimited ERC20 approval granted to ${args[0]}`,
+          txHash: tx.hash,
+          risk: 90,
+          revoke: {
+            target: tx.to,
+            calldata: approvalInterface.encodeFunctionData('approve', [args[0], 0]),
+          }
+        });
+      } else if (name === 'setApprovalForAll' && args[1] === true) {
+        results.push({
+          type: 'High Risk Approval',
+          description: `Collection-wide NFT approval granted to ${args[0]}`,
+          txHash: tx.hash,
+          risk: 80,
+          revoke: {
+            target: tx.to,
+            calldata: approvalInterface.encodeFunctionData('setApprovalForAll', [args[0], false]),
+          }
+        });
+      } else if (name === 'permit') {
+        const deadline = args[3]; // Deadline is the fourth argument in EIP-2612
+        const oneYearFromNow = Math.floor(Date.now() / 1000) + 31536000;
+        if (deadline && BigInt(deadline.toString()) > BigInt(oneYearFromNow)) {
+            results.push({ type: 'Medium Risk Approval', description: `Long-lived 'Permit' signature granted to ${args[1]}`, txHash: tx.hash, risk: 65 });
+        }
+      } else if (name.toLowerCase().includes('permittransferfrom')) {
+        results.push({ type: 'Informational', description: `Interaction with Permit2-enabled contract ${tx.to}`, txHash: tx.hash, risk: 40 });
       }
     }
     return results;
