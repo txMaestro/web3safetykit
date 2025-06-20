@@ -1,5 +1,6 @@
 const BlockchainService = require('./blockchain.service');
 const { ethers } = require('ethers');
+const GuestScanCache = require('../models/GuestScanCache');
 
 // Re-using risk definitions from workers to keep consistency
 const { RISK_KEYWORDS, RISKY_SIGNATURES, analyzeHoneypotIndicators } = require('../workers/contract.worker');
@@ -16,8 +17,18 @@ class ScanService {
    * @returns {Promise<object>} - A formatted summary of the scan results for the frontend.
    */
   static async performGuestScan(walletAddress) {
-    console.log(`[ScanService] Starting multi-chain guest scan for ${walletAddress}`);
-    // Temporarily limiting to ETH and Base as requested
+    const cacheKey = walletAddress.toLowerCase();
+    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
+
+    // 1. Check for a recent, valid cache entry
+    const cachedScan = await GuestScanCache.findOne({ walletAddress: cacheKey });
+    if (cachedScan && cachedScan.lastScannedAt > twelveHoursAgo) {
+      console.log(`[ScanService] Returning cached result for ${walletAddress}`);
+      return cachedScan.lastScanResult;
+    }
+
+    console.log(`[ScanService] Starting fresh multi-chain guest scan for ${walletAddress}`);
+    
     const supportedChains = [
       'ethereum',
       'base',
@@ -58,7 +69,20 @@ class ScanService {
       }
     });
 
-    return this.formatResultsForFrontend(rawResults);
+    const formattedResult = this.formatResultsForFrontend(rawResults);
+
+    // 2. Save the new result to the cache
+    await GuestScanCache.findOneAndUpdate(
+      { walletAddress: cacheKey },
+      {
+        lastScanResult: formattedResult,
+        lastScannedAt: new Date(),
+      },
+      { upsert: true, new: true }
+    );
+    console.log(`[ScanService] Saved new scan result to cache for ${walletAddress}`);
+
+    return formattedResult;
   }
 
   static async analyzeApprovals(walletAddress, transactions, chain) {
