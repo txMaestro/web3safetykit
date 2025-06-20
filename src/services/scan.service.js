@@ -74,6 +74,8 @@ class ScanService {
         results.push({
           type: 'High Risk Approval',
           description: `Unlimited ERC20 approval granted to ${args[0]}`,
+          tokenAddress: tx.to,
+          spender: args[0],
           txHash: tx.hash,
           risk: 90,
           revoke: {
@@ -85,6 +87,8 @@ class ScanService {
         results.push({
           type: 'High Risk Approval',
           description: `Collection-wide NFT approval granted to ${args[0]}`,
+          contractAddress: tx.to,
+          operator: args[0],
           txHash: tx.hash,
           risk: 80,
           revoke: {
@@ -96,10 +100,23 @@ class ScanService {
         const deadline = args[3]; // Deadline is the fourth argument in EIP-2612
         const oneYearFromNow = Math.floor(Date.now() / 1000) + 31536000;
         if (deadline && BigInt(deadline.toString()) > BigInt(oneYearFromNow)) {
-          results.push({ type: 'Medium Risk Approval', description: `Long-lived 'Permit' signature granted to ${args[1]}`, txHash: tx.hash, risk: 65 });
+          results.push({
+            type: 'Medium Risk Approval',
+            description: `Long-lived 'Permit' signature granted to ${args[1]}`,
+            tokenAddress: tx.to,
+            spender: args[1],
+            txHash: tx.hash,
+            risk: 65
+          });
         }
       } else if (name.toLowerCase().includes('permittransferfrom')) {
-        results.push({ type: 'Informational', description: `Interaction with Permit2-enabled contract ${tx.to}`, txHash: tx.hash, risk: 40 });
+        results.push({
+          type: 'Informational',
+          description: `Interaction with Permit2-enabled contract ${tx.to}`,
+          contractAddress: tx.to,
+          txHash: tx.hash,
+          risk: 40
+        });
       }
     }
     return results;
