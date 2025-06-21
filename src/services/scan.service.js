@@ -1,6 +1,7 @@
 const BlockchainService = require('./blockchain.service');
 const { ethers } = require('ethers');
 const GuestScanCache = require('../models/GuestScanCache');
+const LabelService = require('./label.service');
 
 // Re-using risk definitions from workers to keep consistency
 const { RISK_KEYWORDS, RISKY_SIGNATURES, analyzeHoneypotIndicators } = require('../workers/contract.worker');
@@ -69,9 +70,47 @@ class ScanService {
       }
     });
 
-    const formattedResult = this.formatResultsForFrontend(rawResults);
+    // 3. Group addresses by chain and fetch labels in parallel
+    const addressesByChain = {};
+    for (const chain in rawResults) {
+      const result = rawResults[chain];
+      if (result.data) {
+        if (!addressesByChain[chain]) {
+          addressesByChain[chain] = new Set();
+        }
+        result.data.approvals.forEach(a => {
+          addressesByChain[chain].add(a.spender);
+          if (a.tokenAddress) addressesByChain[chain].add(a.tokenAddress);
+        });
+        result.data.contracts.forEach(c => {
+          addressesByChain[chain].add(c.address);
+        });
+        result.data.lpPositions.forEach(lp => {
+          addressesByChain[chain].add(lp.address);
+        });
+      }
+    }
 
-    // 2. Save the new result to the cache
+    const labelPromises = Object.entries(addressesByChain).map(([chain, addresses]) => {
+      return LabelService.getLabels(Array.from(addresses), chain);
+    });
+
+    const settledLabelResults = await Promise.allSettled(labelPromises);
+    const allLabels = new Map();
+    settledLabelResults.forEach(result => {
+      if (result.status === 'fulfilled') {
+        for (const [address, label] of result.value.entries()) {
+          allLabels.set(address.toLowerCase(), label);
+        }
+      }
+    });
+
+    const formattedResult = this.formatResultsForFrontend(rawResults, allLabels);
+
+    // Add the label for the wallet address itself
+    formattedResult.overview.walletLabel = allLabels.get(walletAddress.toLowerCase()) || 'Unknown';
+
+    // 4. Save the new result to the cache
     await GuestScanCache.findOneAndUpdate(
       { walletAddress: cacheKey },
       {
@@ -158,17 +197,17 @@ class ScanService {
         // Honeypot analysis
         const honeypotIndicators = analyzeHoneypotIndicators(originalSourceCode);
         if (honeypotIndicators.hiddenApprove) {
-          results.push({ type: 'Critical Honeypot Alert', description: 'This contract contains a hidden approve function and is likely malicious.', txHash: transactions.find(t => t.to === address)?.hash, risk: 100 });
+          results.push({ address: address, type: 'Critical Honeypot Alert', description: 'This contract contains a hidden approve function and is likely malicious.', txHash: transactions.find(t => t.to === address)?.hash, risk: 100 });
           continue; // If it's a critical honeypot, no need for other checks
         }
         if (honeypotIndicators.details.length > 0) {
-          results.push({ type: 'Suspicious Contract', description: `Honeypot indicators found: ${honeypotIndicators.details.join(' ')}`, txHash: transactions.find(t => t.to === address)?.hash, risk: 75 });
+          results.push({ address: address, type: 'Suspicious Contract', description: `Honeypot indicators found: ${honeypotIndicators.details.join(' ')}`, txHash: transactions.find(t => t.to === address)?.hash, risk: 75 });
         }
 
         // Standard keyword analysis
         const foundKeywords = RISK_KEYWORDS.HIGH.filter(k => lowerCaseSourceCode.includes(k));
         if (foundKeywords.length > 0) {
-          results.push({ type: 'High Risk Contract Interaction', description: `Verified contract with keywords: ${foundKeywords.join(', ')}`, txHash: transactions.find(t => t.to === address)?.hash, risk: 85 });
+          results.push({ address: address, type: 'High Risk Contract Interaction', description: `Verified contract with keywords: ${foundKeywords.join(', ')}`, txHash: transactions.find(t => t.to === address)?.hash, risk: 85 });
         }
       } else {
         const bytecode = await BlockchainService.getCode(address, chain);
@@ -179,7 +218,7 @@ class ScanService {
           }
         }
         if (foundSignatures.length > 0) {
-          results.push({ type: 'High Risk Contract Interaction', description: `Unverified contract with functions: ${foundSignatures.join(', ')}`, txHash: transactions.find(t => t.to === address)?.hash, risk: 95 });
+          results.push({ address: address, type: 'High Risk Contract Interaction', description: `Unverified contract with functions: ${foundSignatures.join(', ')}`, txHash: transactions.find(t => t.to === address)?.hash, risk: 95 });
         }
       }
     }
@@ -195,12 +234,12 @@ class ScanService {
       if (!parsedTx || checkedContracts.has(tx.to)) continue;
 
       checkedContracts.add(tx.to);
-      results.push({ type: 'Forgotten Liquidity Pool', description: `Potential LP/Staking position in ${tx.to}`, txHash: tx.hash, risk: 35 });
+      results.push({ address: tx.to, type: 'Forgotten Liquidity Pool', description: `Potential LP/Staking position in ${tx.to}`, txHash: tx.hash, risk: 35 });
     }
     return results;
   }
 
-  static formatResultsForFrontend(rawResults) {
+  static formatResultsForFrontend(rawResults, labels = new Map()) {
     const formatted = {
       overview: {
         totalValue: 'N/A', // Not implemented
@@ -209,6 +248,7 @@ class ScanService {
         stakedAssets: 0, // Using LP positions for this
         lpPositions: 0,
         lastScan: new Date().toISOString(),
+        walletLabel: 'Unknown', // Add a default value
       },
       alertsByChain: {},
     };
@@ -224,6 +264,19 @@ class ScanService {
       }
 
       const { approvals, contracts, lpPositions } = result.data;
+      
+      // Add labels to the alerts
+      approvals.forEach(a => {
+        a.spenderLabel = labels.get(a.spender.toLowerCase()) || 'Unknown';
+        a.tokenLabel = labels.get(a.tokenAddress.toLowerCase()) || 'Unknown';
+      });
+      contracts.forEach(c => {
+        c.contractLabel = labels.get(c.address.toLowerCase()) || 'Unknown';
+      });
+      lpPositions.forEach(lp => {
+        lp.positionLabel = labels.get(lp.address.toLowerCase()) || 'Unknown';
+      });
+
       const allAlerts = [...approvals, ...contracts, ...lpPositions];
 
       formatted.alertsByChain[chain] = { alerts: allAlerts };
