@@ -190,29 +190,34 @@ class ScanService {
   static async analyzeContracts(walletAddress, transactions, chain) {
     const results = [];
     const interactedContracts = [...new Set(transactions.map(tx => tx.to).filter(Boolean))];
-    for (const address of interactedContracts) {
-      const sourceCodeData = await BlockchainService.getSourceCode(address, chain);
-      if (sourceCodeData.SourceCode) {
+    for (const proxyAddress of interactedContracts) {
+      // Determine the address to analyze: implementation for proxies, or the original address
+      const implementationAddress = await BlockchainService.getImplementationAddress(proxyAddress, chain);
+      const addressToAnalyze = implementationAddress || proxyAddress;
+
+      const sourceCodeData = await BlockchainService.getSourceCode(addressToAnalyze, chain);
+      if (sourceCodeData && sourceCodeData.SourceCode) {
         const originalSourceCode = sourceCodeData.SourceCode;
         const lowerCaseSourceCode = originalSourceCode.toLowerCase();
 
         // Honeypot analysis
         const honeypotIndicators = analyzeHoneypotIndicators(originalSourceCode);
         if (honeypotIndicators.hiddenApprove) {
-          results.push({ address: address, type: 'Critical Honeypot Alert', description: 'This contract contains a hidden approve function and is likely malicious.', txHash: transactions.find(t => t.to === address)?.hash, risk: 100 });
-          continue; // If it's a critical honeypot, no need for other checks
+          results.push({ address: proxyAddress, type: 'Critical Honeypot Alert', description: 'This contract contains a hidden approve function and is likely malicious.', txHash: transactions.find(t => t.to === proxyAddress)?.hash, risk: 100 });
+          continue;
         }
         if (honeypotIndicators.details.length > 0) {
-          results.push({ address: address, type: 'Suspicious Contract', description: `Honeypot indicators found: ${honeypotIndicators.details.join(' ')}`, txHash: transactions.find(t => t.to === address)?.hash, risk: 75 });
+          results.push({ address: proxyAddress, type: 'Suspicious Contract', description: `Honeypot indicators found: ${honeypotIndicators.details.join(' ')}`, txHash: transactions.find(t => t.to === proxyAddress)?.hash, risk: 75 });
         }
 
         // Standard keyword analysis
         const foundKeywords = RISK_KEYWORDS.HIGH.filter(k => lowerCaseSourceCode.includes(k));
         if (foundKeywords.length > 0) {
-          results.push({ address: address, type: 'High Risk Contract Interaction', description: `Verified contract with keywords: ${foundKeywords.join(', ')}`, txHash: transactions.find(t => t.to === address)?.hash, risk: 85 });
+          results.push({ address: proxyAddress, type: 'High Risk Contract Interaction', description: `Verified contract with keywords: ${foundKeywords.join(', ')}`, txHash: transactions.find(t => t.to === proxyAddress)?.hash, risk: 85 });
         }
       } else {
-        const bytecode = await BlockchainService.getCode(address, chain);
+        const bytecode = await BlockchainService.getCode(addressToAnalyze, chain);
+        if (!bytecode) continue;
         const foundSignatures = [];
         for (const sig in RISKY_SIGNATURES.HIGH) {
           if (bytecode.includes(RISKY_SIGNATURES.HIGH[sig].substring(2))) {
@@ -220,7 +225,7 @@ class ScanService {
           }
         }
         if (foundSignatures.length > 0) {
-          results.push({ address: address, type: 'High Risk Contract Interaction', description: `Unverified contract with functions: ${foundSignatures.join(', ')}`, txHash: transactions.find(t => t.to === address)?.hash, risk: 95 });
+          results.push({ address: proxyAddress, type: 'High Risk Contract Interaction', description: `Unverified contract with functions: ${foundSignatures.join(', ')}`, txHash: transactions.find(t => t.to === proxyAddress)?.hash, risk: 95 });
         }
       }
     }
