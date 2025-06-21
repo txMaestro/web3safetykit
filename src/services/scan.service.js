@@ -79,8 +79,10 @@ class ScanService {
           addressesByChain[chain] = new Set();
         }
         result.data.approvals.forEach(a => {
-          addressesByChain[chain].add(a.spender);
+          if (a.spender) addressesByChain[chain].add(a.spender);
           if (a.tokenAddress) addressesByChain[chain].add(a.tokenAddress);
+          if (a.contractAddress) addressesByChain[chain].add(a.contractAddress);
+          if (a.operator) addressesByChain[chain].add(a.operator);
         });
         result.data.contracts.forEach(c => {
           addressesByChain[chain].add(c.address);
@@ -267,8 +269,10 @@ class ScanService {
       
       // Add labels to the alerts
       approvals.forEach(a => {
-        a.spenderLabel = labels.get(a.spender.toLowerCase()) || 'Unknown';
-        a.tokenLabel = labels.get(a.tokenAddress.toLowerCase()) || 'Unknown';
+        if (a.spender) a.spenderLabel = labels.get(a.spender.toLowerCase()) || 'Unknown';
+        if (a.tokenAddress) a.tokenLabel = labels.get(a.tokenAddress.toLowerCase()) || 'Unknown';
+        if (a.contractAddress) a.contractLabel = labels.get(a.contractAddress.toLowerCase()) || 'Unknown';
+        if (a.operator) a.operatorLabel = labels.get(a.operator.toLowerCase()) || 'Unknown';
       });
       contracts.forEach(c => {
         c.contractLabel = labels.get(c.address.toLowerCase()) || 'Unknown';
