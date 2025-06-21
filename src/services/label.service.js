@@ -42,8 +42,33 @@ class LabelService {
       labelCache.set(`${label.address}-${chain}`, label.label);
     });
 
-    // 3. For any addresses still without a label, try fetching from a block explorer API
-    const remainingAddresses = uncachedAddresses.filter(a => !labels.has(a));
+    // 3. For any addresses still without a label, try reading the name directly from the contract
+    let remainingAddresses = uncachedAddresses.filter(a => !labels.has(a));
+    if (remainingAddresses.length > 0) {
+        const onChainNamePromises = remainingAddresses.map(address => BlockchainService.getContractName(address, chain));
+        const onChainNames = await Promise.allSettled(onChainNamePromises);
+        
+        const newLabelsToSave = [];
+        onChainNames.forEach((result, index) => {
+            if (result.status === 'fulfilled' && result.value) {
+                const address = remainingAddresses[index];
+                const label = result.value;
+                labels.set(address, label);
+                labelCache.set(`${address}-${chain}`, label);
+                newLabelsToSave.push({ address, chain, label, source: 'on-chain' });
+            }
+        });
+
+        if (newLabelsToSave.length > 0) {
+            AddressLabel.insertMany(newLabelsToSave, { ordered: false })
+              .catch(err => {
+                if (err.code !== 11000) console.error('[LabelService] Error saving on-chain labels to DB:', err);
+              });
+        }
+    }
+
+    // 4. For any addresses STILL without a label, try fetching from a block explorer API
+    remainingAddresses = uncachedAddresses.filter(a => !labels.has(a));
 
     const chainToProviderMap = {
       ethereum: 'etherscan',
@@ -64,43 +89,36 @@ class LabelService {
 
       const results = await Promise.allSettled(promises);
       const newLabelsToSave = [];
-      const proxyResolutionPromises = [];
 
-      results.forEach((result, index) => {
-        const address = remainingAddresses[index];
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        const address = remainingAddresses[i];
+
         if (result.status === 'fulfilled' && result.value.data && result.value.data.status === '1') {
-          const contractName = result.value.data.result[0].ContractName;
-          if (contractName && contractName.trim() !== '' && contractName !== 'vyper_contract') {
-            let label = contractName.trim();
-            
-            // Check if the contract is a known proxy type
-            if (label.toLowerCase().includes('proxy')) {
-              // If it's a proxy, create a promise to resolve the implementation
-              const resolutionPromise = this.resolveProxy(address, chain, provider)
-                .then(implementationLabel => {
-                  if (implementationLabel) {
-                    label = implementationLabel; // Use the more specific implementation label
-                  }
-                })
-                .finally(() => {
-                  // Save the final label (either proxy or implementation)
-                  labels.set(address, label);
-                  labelCache.set(`${address}-${chain}`, label);
-                  newLabelsToSave.push({ address, chain, label, source: chain });
-                });
-              proxyResolutionPromises.push(resolutionPromise);
-            } else {
-              // Not a proxy, save label directly
-              labels.set(address, label);
-              labelCache.set(`${address}-${chain}`, label);
-              newLabelsToSave.push({ address, chain, label, source: chain });
+          const initialName = result.value.data.result[0].ContractName;
+
+          if (initialName && initialName.trim() !== '' && initialName !== 'vyper_contract') {
+            let finalLabel = initialName.trim();
+
+            // If it's a proxy, try to resolve the implementation name
+            if (finalLabel.toLowerCase().includes('proxy')) {
+              const implementationLabel = await this.resolveProxy(address, chain, provider);
+              // Only use the implementation label if it's valid and different
+              if (implementationLabel && implementationLabel.toLowerCase() !== finalLabel.toLowerCase()) {
+                finalLabel = implementationLabel;
+              } else {
+                // If we can't find a better name, don't label it at all.
+                continue; 
+              }
             }
+            
+            // Save the meaningful label
+            labels.set(address, finalLabel);
+            labelCache.set(`${address}-${chain}`, finalLabel);
+            newLabelsToSave.push({ address, chain, label: finalLabel, source: chain });
           }
         }
-      });
-
-      // Wait for all proxy resolutions to complete before proceeding
-      await Promise.allSettled(proxyResolutionPromises);
+      }
 
       // Batch insert new labels into the database, but don't wait for it to finish
       if (newLabelsToSave.length > 0) {

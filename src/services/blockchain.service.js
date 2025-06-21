@@ -298,6 +298,29 @@ class BlockchainService {
       return null;
     }
   }
+
+  /**
+   * Tries to read the 'name()' function from a contract.
+   * @param {string} contractAddress - The address of the contract.
+   * @param {string} chain - The blockchain name.
+   * @returns {Promise<string|null>} The contract name or null if not available.
+   */
+  static async getContractName(contractAddress, chain) {
+    const provider = this.getProvider(chain);
+    const abi = ["function name() view returns (string)"];
+    const contract = new ethers.Contract(contractAddress, abi, provider);
+    try {
+      // Add a timeout to prevent long hangs on non-responsive nodes/contracts
+      const name = await Promise.race([
+        contract.name(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+      ]);
+      return name;
+    } catch (error) {
+      // Expected to fail for contracts without a name() function, or if it's not a contract.
+      return null;
+    }
+  }
 }
 
 module.exports = BlockchainService;
