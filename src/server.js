@@ -21,6 +21,7 @@ app.use('/api/queue', require('./api/routes/queue'));
 app.use('/api/v1/actions', require('./api/routes/actions'));
 app.use('/api/v1/reports', require('./api/routes/reports'));
 app.use('/api/v1/telegram', require('./api/routes/telegram'));
+app.use('/api/v1/contract', require('./api/routes/contract'));
 
 // --- WORKER INITIALIZATION ---
 // The require calls below initialize the workers and their listeners.
