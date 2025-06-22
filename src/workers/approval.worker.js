@@ -3,6 +3,7 @@ const Wallet = require('../models/Wallet');
 const Report = require('../models/Report');
 const BlockchainService = require('../services/blockchain.service');
 const NotificationService = require('../services/notification.service');
+const LabelService = require('../services/label.service');
 const User = require('../models/User');
 const { ethers } = require('ethers');
 
@@ -154,6 +155,32 @@ const processApprovalAnalysis = async (job) => {
 
     console.log(`[ApprovalWorker] Found ${riskyApprovals.length} active risky approvals for wallet: ${wallet.address}`);
 
+    // --- Enrich with Labels ---
+    const addressesToLabel = new Set();
+    riskyApprovals.forEach(approval => {
+      if (approval.tokenAddress) addressesToLabel.add(approval.tokenAddress);
+      if (approval.contractAddress) addressesToLabel.add(approval.contractAddress);
+      if (approval.spender) addressesToLabel.add(approval.spender);
+      if (approval.operator) addressesToLabel.add(approval.operator);
+    });
+
+    const labels = await LabelService.getLabels(Array.from(addressesToLabel), wallet.chain);
+    const getDisplayName = (address) => {
+      if (!address) return 'Unknown';
+      const label = labels.get(address.toLowerCase());
+      return label && label !== 'Unknown' ? label : `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
+    };
+
+    // Add labels to the risky approvals for the report
+    riskyApprovals.forEach(approval => {
+      if (approval.tokenAddress) approval.tokenLabel = getDisplayName(approval.tokenAddress);
+      if (approval.contractAddress) approval.contractLabel = getDisplayName(approval.contractAddress);
+      if (approval.spender) approval.spenderLabel = getDisplayName(approval.spender);
+      if (approval.operator) approval.operatorLabel = getDisplayName(approval.operator);
+    });
+    // --- End of Enrichment ---
+
+
     // --- Stateful Notification Logic ---
     const user = await User.findById(wallet.userId);
     const previousApprovals = new Set(wallet.lastAnalysisState.approvals || []);
@@ -166,14 +193,17 @@ const processApprovalAnalysis = async (job) => {
       // Check if this is a new, medium-to-high-risk approval
       if (!previousApprovals.has(identifier) && (approval.riskLevel === 'high' || approval.riskLevel === 'medium')) {
         let riskDescription = '';
+        const spenderName = getDisplayName(approval.spender || approval.operator);
+        const contractName = getDisplayName(approval.tokenAddress || approval.contractAddress);
+
         if (approval.isUnlimited) {
-            riskDescription = 'UNLIMITED spending approval granted.';
+            riskDescription = `UNLIMITED spending approval granted to ${spenderName}.`;
         } else if (approval.type === 'NFT') {
-            riskDescription = 'Approval for the ENTIRE collection granted.';
+            riskDescription = `Approval for the ENTIRE ${contractName} collection granted to ${spenderName}.`;
         } else if (approval.type === 'Permit') {
-            riskDescription = `Long-lived 'Permit' signature granted until ${approval.deadline}.`;
+            riskDescription = `Long-lived 'Permit' signature granted to ${spenderName} until ${new Date(approval.deadline).toLocaleDateString()}.`;
         } else if (approval.type === 'Permit2 Interaction') {
-            riskDescription = 'Interaction with a Permit2-enabled contract, which may represent a standing approval.';
+            riskDescription = `Interaction with ${contractName}, which may represent a standing approval via Permit2.`;
         }
 
         const message = `
@@ -183,8 +213,8 @@ const processApprovalAnalysis = async (job) => {
 Your wallet (*${wallet.label || wallet.address.substring(0, 6)}...*) has a new spending approval:
 
 - *Type:* ${approval.type}
-- *Contract:* \`${approval.tokenAddress || approval.contractAddress}\`
-- *Spender:* \`${approval.spender || approval.operator}\`
+- *Contract:* ${contractName}
+- *Spender:* ${spenderName}
 - *Risk:* ${riskDescription}
 
 If this is unexpected, review and consider revoking the approval.

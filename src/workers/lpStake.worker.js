@@ -2,6 +2,7 @@ const { createWorker } = require('./workerRunner');
 const Wallet = require('../models/Wallet');
 const Report = require('../models/Report');
 const BlockchainService = require('../services/blockchain.service');
+const LabelService = require('../services/label.service');
 const { ethers } = require('ethers');
 
 const TASK_TYPE = 'analyze_lp_stake';
@@ -62,6 +63,19 @@ const processLpStakeAnalysis = async (job) => {
     console.log(`[LpStakeWorker] Found ${foundPositions.length} potential LP/Staking interactions.`);
 
     if (foundPositions.length > 0) {
+      // Enrich with labels
+      const addressesToLabel = foundPositions.map(p => p.contractAddress);
+      const labels = await LabelService.getLabels(addressesToLabel, wallet.chain);
+      const getDisplayName = (address) => {
+        if (!address) return 'Unknown';
+        const label = labels.get(address.toLowerCase());
+        return label && label !== 'Unknown' ? label : `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
+      };
+
+      foundPositions.forEach(p => {
+        p.label = getDisplayName(p.contractAddress);
+      });
+
       // Here, we just identify the interaction. A full implementation would then
       // query the user's balance or staked amount in these contracts.
       // For MVP, identifying the potential platform is a huge step.

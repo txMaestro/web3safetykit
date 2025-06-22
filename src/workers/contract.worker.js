@@ -5,6 +5,7 @@ const BlockchainService = require('../services/blockchain.service');
 const AiService = require('../services/ai.service');
 const NotificationService = require('../services/notification.service');
 const User = require('../models/User');
+const LabelService = require('../services/label.service');
 
 const TASK_TYPE = 'analyze_contracts';
 const RISK_KEYWORDS = {
@@ -209,6 +210,20 @@ const processContractAnalysis = async (job) => {
 
     console.log(`[ContractWorker] Analysis complete. Found: ${analysisResults.unverifiedContracts.length} unverified, ${analysisResults.unverifiedWithRisks.length} unverified with risks, ${analysisResults.verifiedContractsWithRisks.length} verified with risks.`);
 
+    // --- Enrich with Labels ---
+    const labels = await LabelService.getLabels(interactedContracts, wallet.chain);
+    const getDisplayName = (address) => {
+      if (!address) return 'Unknown';
+      const label = labels.get(address.toLowerCase());
+      return label && label !== 'Unknown' ? label : `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
+    };
+
+    // Add labels to all analysis results for the report
+    analysisResults.unverifiedContracts.forEach(c => c.label = getDisplayName(c.address));
+    analysisResults.unverifiedWithRisks.forEach(c => c.label = getDisplayName(c.address));
+    analysisResults.verifiedContractsWithRisks.forEach(c => c.label = getDisplayName(c.address));
+    // --- End of Enrichment ---
+
     // --- Stateful Notification Logic ---
     const user = await User.findById(wallet.userId);
     const previousContracts = new Set(wallet.lastAnalysisState.interactedContracts || []);
@@ -216,15 +231,16 @@ const processContractAnalysis = async (job) => {
     // Notify for new, verified contracts with HIGH risk keywords
     for (const contract of analysisResults.verifiedContractsWithRisks) {
       if (!previousContracts.has(contract.address.toLowerCase()) && contract.risks.HIGH.length > 0) {
+        const contractName = getDisplayName(contract.address);
         let riskReason = `High-risk keywords found: *${contract.risks.HIGH.join(', ')}*`;
         let messageTitle = 'HIGH-RISK CONTRACT INTERACTION';
         let additionalWarning = '';
 
         if (contract.honeypotIndicators?.hiddenApprove) {
             messageTitle = 'CRITICAL HONEYPOT ALERT';
-            additionalWarning = '\n\n*CRITICAL WARNING: This contract contains a hidden approval function and is likely a honeypot designed to steal your funds.*';
+            additionalWarning = `\n\n*CRITICAL WARNING: The contract ${contractName} contains a hidden approval function and is likely a honeypot designed to steal your funds.*`;
         } else if (contract.honeypotIndicators?.details.length > 0) {
-            additionalWarning = `\n\n*Honeypot Indicators:* ${contract.honeypotIndicators.details.join(' ')}`;
+            additionalWarning = `\n\n*Honeypot Indicators in ${contractName}:* ${contract.honeypotIndicators.details.join(' ')}`;
         }
 
         const message = `
@@ -232,7 +248,7 @@ const processContractAnalysis = async (job) => {
 
 Your wallet (*${wallet.label || wallet.address.substring(0, 6)}...*) has interacted with a new *high-risk* contract:
 
-- *Contract Address:* \`${contract.address}\`
+- *Contract:* ${contractName} (\`${contract.address}\`)
 - *Detected Risk:* ${riskReason}
 - *AI Summary:* ${contract.aiSummary.substring(0, 200)}...${additionalWarning}
 
@@ -247,13 +263,14 @@ This contract could be extremely dangerous. Please proceed with caution.
     // Notify for new, unverified contracts with HIGH risk signatures
     for (const contract of analysisResults.unverifiedWithRisks) {
       if (!previousContracts.has(contract.address.toLowerCase()) && contract.risks.HIGH.length > 0) {
+        const contractName = getDisplayName(contract.address);
         const riskReason = `High-risk function signatures found in unverified contract: *${contract.risks.HIGH.join(', ')}*`;
         const message = `
 ‼️ *HIGH-RISK CONTRACT INTERACTION* ‼️
 
 Your wallet (*${wallet.label || wallet.address.substring(0, 6)}...*) has interacted with a new, potentially *high-risk, unverified* contract:
 
-- *Contract Address:* \`${contract.address}\`
+- *Contract:* ${contractName} (\`${contract.address}\`)
 - *Detected Risk:* ${riskReason}
 - *Warning:* This contract's source code is not verified and may contain dangerous functions.
 

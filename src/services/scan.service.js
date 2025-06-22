@@ -272,18 +272,45 @@ class ScanService {
 
       const { approvals, contracts, lpPositions } = result.data;
       
-      // Add labels to the alerts
+      // A helper to get a display name (label or formatted address)
+      const getDisplayName = (address) => {
+        if (!address) return 'Unknown';
+        const label = labels.get(address.toLowerCase());
+        return label && label !== 'Unknown' ? label : `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
+      };
+
+      // Add labels and update descriptions
       approvals.forEach(a => {
         if (a.spender) a.spenderLabel = labels.get(a.spender.toLowerCase()) || 'Unknown';
         if (a.tokenAddress) a.tokenLabel = labels.get(a.tokenAddress.toLowerCase()) || 'Unknown';
         if (a.contractAddress) a.contractLabel = labels.get(a.contractAddress.toLowerCase()) || 'Unknown';
         if (a.operator) a.operatorLabel = labels.get(a.operator.toLowerCase()) || 'Unknown';
+
+        // Re-write descriptions with labels
+        if (a.description.startsWith('Unlimited ERC20')) {
+          a.description = `Unlimited ERC20 approval granted to ${getDisplayName(a.spender)}`;
+        } else if (a.description.startsWith('Collection-wide')) {
+          a.description = `Collection-wide NFT approval granted to ${getDisplayName(a.operator)}`;
+        } else if (a.description.startsWith('Long-lived')) {
+          a.description = `Long-lived 'Permit' signature granted to ${getDisplayName(a.spender)}`;
+        } else if (a.description.startsWith('Interaction with Permit2')) {
+          a.description = `Interaction with Permit2-enabled contract ${getDisplayName(a.contractAddress)}`;
+        }
       });
       contracts.forEach(c => {
         c.contractLabel = labels.get(c.address.toLowerCase()) || 'Unknown';
+        const displayName = getDisplayName(c.address);
+        if (c.description.startsWith('Unverified contract')) {
+          c.description = `Unverified contract (${displayName}) with functions: ${c.description.split(': ')[1]}`;
+        } else if (c.description.startsWith('Verified contract')) {
+          c.description = `Verified contract (${displayName}) with keywords: ${c.description.split(': ')[1]}`;
+        } else if (c.description.startsWith('Honeypot indicators')) {
+          c.description = `Honeypot indicators found in ${displayName}: ${c.description.split(': ')[1]}`;
+        }
       });
       lpPositions.forEach(lp => {
         lp.positionLabel = labels.get(lp.address.toLowerCase()) || 'Unknown';
+        lp.description = `Potential LP/Staking position in ${getDisplayName(lp.address)}`;
       });
 
       const allAlerts = [...approvals, ...contracts, ...lpPositions];
