@@ -46,7 +46,8 @@ class ContractAnalysisService {
     }
 
     // 3. Enrich the result with labels and other metadata
-    const label = await LabelService.getLabel(address, chain);
+    const labelsMap = await LabelService.getLabels([address], chain);
+    const label = labelsMap.get(address);
 
     const finalResult = {
       contractAddress: address,
