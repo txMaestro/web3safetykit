@@ -8,8 +8,30 @@ if (BOT_TOKEN) {
 
   // --- Bot Onboarding and Commands ---
 
-  // Welcome message on /start
-  bot.start((ctx) => {
+  // Welcome message on /start, with token handling
+  bot.start(async (ctx) => {
+    const token = ctx.startPayload;
+    const chatId = ctx.chat.id;
+
+    // If the /start command includes a token payload
+    if (token) {
+      try {
+        // This requires an internal API call from the bot to the main server
+        const axios = require('axios');
+        const apiEndpoint = process.env.API_BASE_URL || 'http://localhost:3001';
+        
+        await axios.post(`${apiEndpoint}/api/v1/telegram/connect`, { token, chatId });
+
+        ctx.reply('✅ *Success!* Your Telegram account has been connected. You will now receive real-time security alerts here.');
+
+      } catch (error) {
+        console.error('[Bot] Failed to connect account via token:', error.response ? error.response.data : error.message);
+        ctx.reply('❌ *Error!* The connection link was invalid or has expired. Please generate a new link from the website and try again.');
+      }
+      return;
+    }
+
+    // Default welcome message if no token is present
     const welcomeMessage = `
 👋 *Welcome to the Web3 Safety Kit Bot!*
 
@@ -18,7 +40,7 @@ I'm here to send you real-time alerts about risky approvals and suspicious contr
 To get started, you need to:
 1.  **Sign up** on our website.
 2.  **Add your wallet address** to your profile.
-3.  **Connect your Telegram account** in your user settings to link it with your wallet.
+3.  **Click "Connect Telegram"** in your user settings to get a unique link to connect your account.
 
 Once connected, I'll start monitoring your on-chain activity and keep you safe!
     `;
