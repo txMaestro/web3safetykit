@@ -1,5 +1,9 @@
 require('dotenv').config();
 
+// --- DEBUGGING: Check if the environment variable is loaded ---
+console.log(`[providerConfig] BASESCAN_API_KEY loaded: ${process.env.BASESCAN_API_KEY ? 'Yes' : 'No'}`);
+// --- END DEBUGGING ---
+
 const providerConfig = {
   etherscan: {
     baseUrl: 'https://api.etherscan.io/api',
@@ -33,8 +37,8 @@ const providerConfig = {
   basescan: {
     baseUrl: 'https://api.basescan.org/api',
     apiKey: process.env.BASESCAN_API_KEY,
-    rateLimitPerSecond: parseInt(process.env.BASE_RATE_LIMIT_SECOND, 10) || 5,
-    rateLimitPerMinute: parseInt(process.env.BASE_RATE_LIMIT_MINUTE, 10) || 300,
+    rateLimitPerSecond: parseInt(process.env.BASE_RATE_LIMIT_SECOND, 10) || 5, // Reduced from 5 to 3 to be safer
+    rateLimitPerMinute: parseInt(process.env.BASE_RATE_LIMIT_MINUTE, 10) || 300, // Adjusted to match the new per-second limit
     rateLimitPerDay: parseInt(process.env.BASE_RATE_LIMIT_DAY, 10) || 100000,
   },
   zksync_explorer: {
