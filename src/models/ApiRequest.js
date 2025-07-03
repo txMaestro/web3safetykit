@@ -6,13 +6,9 @@ const apiRequestSchema = new mongoose.Schema({
     required: true,
     index: true,
     enum: [
-      'etherscan',
-      'bscscan',
+      'etherscan_v2', // Unified provider for all Etherscan-like explorers
       'gemini',
-      'polygonscan',
-      'arbiscan',
-      'basescan',
-      'zksync_explorer'
+      // 'zksync_explorer' is now also handled by etherscan_v2
     ],
   },
   requestData: {
