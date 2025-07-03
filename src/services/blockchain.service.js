@@ -1,5 +1,6 @@
 const { ethers } = require('ethers');
 const RequestQueueService = require('./RequestQueueService');
+const { CHAIN_ID_MAP } = require('../config/providerConfig');
 
 const providers = {
   ethereum: new ethers.JsonRpcProvider(process.env.ETHEREUM_RPC_URL || `https://mainnet.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`),
@@ -7,16 +8,6 @@ const providers = {
   arbitrum: new ethers.JsonRpcProvider(process.env.ARBITRUM_RPC_URL || `https://arb-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY_ARBITRUM}`),
   base: new ethers.JsonRpcProvider(process.env.BASE_RPC_URL || `https://mainnet.base.org`),
   zksync: new ethers.JsonRpcProvider(process.env.ZKSYNC_RPC_URL || 'https://mainnet.era.zksync.io'),
-};
-
-const explorerApiUrls = {
-  ethereum: 'https://api.etherscan.io/api',
-  bsc: 'https://api.bscscan.com/api',
-};
-
-const explorerApiKeys = {
-  ethereum: process.env.ETHERSCAN_API_KEY,
-  bsc: process.env.BSCSCAN_API_KEY,
 };
 
 class BlockchainService {
@@ -39,12 +30,12 @@ class BlockchainService {
    * @returns {string}
    */
   static getProviderName(chain) {
-    if (chain === 'ethereum') return 'etherscan';
-    if (chain === 'polygon') return 'polygonscan';
-    if (chain === 'arbitrum') return 'arbiscan';
-    if (chain === 'base') return 'basescan';
-    if (chain === 'zksync') return 'zksync_explorer';
-    throw new Error(`Provider name for chain '${chain}' not configured.`);
+    // With Etherscan V2, all supported chains use the same provider config key.
+    if (CHAIN_ID_MAP[chain]) {
+      return 'etherscan_v2';
+    }
+    // A fallback or error for any chains not in our map
+    throw new Error(`Provider name for chain '${chain}' not configured in CHAIN_ID_MAP.`);
   }
 
   /**
@@ -60,6 +51,7 @@ class BlockchainService {
       module: 'account',
       action: 'tokenapproval',
       address: address,
+      chainid: CHAIN_ID_MAP[chain],
       ...options,
     };
     return RequestQueueService.add(providerName, requestData);
@@ -99,6 +91,7 @@ class BlockchainService {
       action: 'txlist',
       address: address,
       sort: 'asc', // Default sort, can be overridden by options
+      chainid: CHAIN_ID_MAP[chain],
       ...options,
     };
     return RequestQueueService.add(providerName, requestData);
@@ -117,6 +110,7 @@ class BlockchainService {
       module: 'contract',
       action: 'getsourcecode',
       address: address,
+      chainid: CHAIN_ID_MAP[chain],
       ...options,
     };
     return RequestQueueService.add(providerName, requestData);
@@ -170,6 +164,7 @@ class BlockchainService {
       action: 'tokennfttx',
       address: address,
       sort: 'asc',
+      chainid: CHAIN_ID_MAP[chain],
       ...options,
     };
     return RequestQueueService.add(providerName, requestData);
@@ -209,6 +204,7 @@ class BlockchainService {
       action: 'tokentx',
       address: address,
       sort: 'asc',
+      chainid: CHAIN_ID_MAP[chain],
       ...options,
     };
     return RequestQueueService.add(providerName, requestData);

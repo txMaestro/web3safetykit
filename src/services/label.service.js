@@ -1,6 +1,6 @@
 const axios = require('axios');
 const AddressLabel = require('../models/AddressLabel');
-const providerConfig = require('../config/providerConfig');
+const { providerConfig, CHAIN_ID_MAP } = require('../config/providerConfig');
 const BlockchainService = require('./blockchain.service');
 
 // A simple in-memory cache to avoid hitting the DB/API for the same address multiple times in a single run
@@ -45,45 +45,40 @@ class LabelService {
     // 3. For any addresses still without a label, try reading the name directly from the contract
     let remainingAddresses = uncachedAddresses.filter(a => !labels.has(a));
     if (remainingAddresses.length > 0) {
-        const onChainNamePromises = remainingAddresses.map(address => BlockchainService.getContractName(address, chain));
-        const onChainNames = await Promise.allSettled(onChainNamePromises);
-        
-        const newLabelsToSave = [];
-        onChainNames.forEach((result, index) => {
-            if (result.status === 'fulfilled' && result.value) {
-                const address = remainingAddresses[index];
-                const label = result.value;
-                labels.set(address, label);
-                labelCache.set(`${address}-${chain}`, label);
-                newLabelsToSave.push({ address, chain, label, source: 'on-chain' });
-            }
-        });
+      const onChainNamePromises = remainingAddresses.map(address => BlockchainService.getContractName(address, chain));
+      const onChainNames = await Promise.allSettled(onChainNamePromises);
 
-        if (newLabelsToSave.length > 0) {
-            AddressLabel.insertMany(newLabelsToSave, { ordered: false })
-              .catch(err => {
-                if (err.code !== 11000) console.error('[LabelService] Error saving on-chain labels to DB:', err);
-              });
+      const newLabelsToSave = [];
+      onChainNames.forEach((result, index) => {
+        if (result.status === 'fulfilled' && result.value) {
+          const address = remainingAddresses[index];
+          const label = result.value;
+          labels.set(address, label);
+          labelCache.set(`${address}-${chain}`, label);
+          newLabelsToSave.push({ address, chain, label, source: 'on-chain' });
         }
+      });
+
+      if (newLabelsToSave.length > 0) {
+        AddressLabel.insertMany(newLabelsToSave, { ordered: false })
+          .catch(err => {
+            if (err.code !== 11000) console.error('[LabelService] Error saving on-chain labels to DB:', err);
+          });
+      }
     }
 
     // 4. For any addresses STILL without a label, try fetching from a block explorer API
     remainingAddresses = uncachedAddresses.filter(a => !labels.has(a));
 
-    const chainToProviderMap = {
-      ethereum: 'etherscan',
-      polygon: 'polygonscan',
-      arbitrum: 'arbiscan',
-      base: 'basescan',
-      zksync: 'zksync_explorer'
-    };
-
-    const providerKey = chainToProviderMap[chain];
+    // With Etherscan V2, all supported chains use the same provider config.
+    const providerKey = 'etherscan_v2';
     const provider = providerConfig[providerKey];
+    const chainId = CHAIN_ID_MAP[chain];
 
-    if (remainingAddresses.length > 0 && provider && provider.apiKey && provider.baseUrl) {
+    if (remainingAddresses.length > 0 && provider && provider.apiKey && provider.baseUrl && chainId) {
       const promises = remainingAddresses.map(address => {
-        const url = `${provider.baseUrl}?module=contract&action=getsourcecode&address=${address}&apikey=${provider.apiKey}`;
+        // Construct the URL for Etherscan V2, including the chainid
+        const url = `${provider.baseUrl}?module=contract&action=getsourcecode&address=${address}&chainid=${chainId}&apikey=${provider.apiKey}`;
         return axios.get(url, { timeout: 5000 });
       });
 
@@ -108,10 +103,10 @@ class LabelService {
                 finalLabel = implementationLabel;
               } else {
                 // If we can't find a better name, don't label it at all.
-                continue; 
+                continue;
               }
             }
-            
+
             // Save the meaningful label
             labels.set(address, finalLabel);
             labelCache.set(`${address}-${chain}`, finalLabel);
@@ -148,9 +143,11 @@ class LabelService {
       if (!implementationAddress) {
         return null;
       }
+      const chainId = CHAIN_ID_MAP[chain];
+      if (!chainId) return null; // Cannot resolve if chainId is unknown
 
-      // Now, fetch the source code for the implementation address
-      const url = `${provider.baseUrl}?module=contract&action=getsourcecode&address=${implementationAddress}&apikey=${provider.apiKey}`;
+      // Now, fetch the source code for the implementation address using V2 format
+      const url = `${provider.baseUrl}?module=contract&action=getsourcecode&address=${implementationAddress}&chainid=${chainId}&apikey=${provider.apiKey}`;
       const response = await axios.get(url, { timeout: 5000 });
 
       if (response.data && response.data.status === '1') {
