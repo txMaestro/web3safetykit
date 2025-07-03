@@ -2,6 +2,8 @@ const BlockchainService = require('./blockchain.service');
 const AiService = require('./ai.service');
 const LabelService = require('./label.service');
 const ContractAnalysis = require('../models/ContractAnalysis');
+const axios = require('axios');
+const { providerConfig, CHAIN_ID_MAP } = require('../config/providerConfig');
 
 // Re-using risk definitions from workers to keep consistency
 const { RISK_KEYWORDS, RISKY_SIGNATURES, analyzeHoneypotIndicators } = require('../workers/contract.worker');
@@ -35,11 +37,12 @@ class ContractAnalysisService {
     const implementationAddress = await BlockchainService.getImplementationAddress(address, chain);
     const addressToAnalyze = implementationAddress || address;
 
-    const sourceCodeData = await BlockchainService.getSourceCode(addressToAnalyze, chain);
+    // For this direct-response service, we bypass the RequestQueue and call the API directly.
+    const sourceCodeResult = await this._fetchSourceCodeDirectly(addressToAnalyze, chain);
     let analysisResult;
 
-    if (sourceCodeData && sourceCodeData.SourceCode) {
-      analysisResult = await this.analyzeVerifiedContract(sourceCodeData.SourceCode);
+    if (sourceCodeResult && sourceCodeResult.SourceCode) {
+      analysisResult = await this.analyzeVerifiedContract(sourceCodeResult.SourceCode);
     } else {
       const bytecode = await BlockchainService.getCode(addressToAnalyze, chain);
       analysisResult = this.analyzeUnverifiedContract(bytecode);
@@ -135,6 +138,36 @@ class ContractAnalysisService {
       aiSummary: 'Source code is not verified. Analysis is based on function signatures found in the bytecode.',
       reason: 'Unverified contract with potentially risky function signatures.',
     };
+  }
+
+  /**
+   * A private helper to fetch source code directly, bypassing the queue for instant responses.
+   * @param {string} address - The contract address.
+   * @param {string} chain - The blockchain name.
+   * @returns {Promise<object|null>} The source code data or null.
+   * @private
+   */
+  static async _fetchSourceCodeDirectly(address, chain) {
+    const provider = providerConfig.etherscan_v2;
+    const chainId = CHAIN_ID_MAP[chain];
+
+    if (!provider || !chainId) {
+      console.error(`[ContractAnalysisService] No provider or chainId found for chain: ${chain}`);
+      return null;
+    }
+
+    const url = `${provider.baseUrl}?module=contract&action=getsourcecode&address=${address}&chainid=${chainId}&apikey=${provider.apiKey}`;
+
+    try {
+      const response = await axios.get(url, { timeout: 15000 }); // 15-second timeout
+      if (response.data && response.data.status === '1' && response.data.result[0]?.SourceCode) {
+        return response.data.result[0];
+      }
+      return null; // No source code found or API error
+    } catch (error) {
+      console.error(`[ContractAnalysisService] Direct API call failed for ${address} on ${chain}:`, error.message);
+      return null;
+    }
   }
 }
 
